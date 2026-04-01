@@ -1,0 +1,947 @@
+PROJECT ROOT: D:\TestIAW
+
+PROJECT TREE
+================================================================================
+TestIAW/
+├── task_d004/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── matcher.py
+│   │   ├── models.py
+│   │   ├── normalizer.py
+│   │   ├── parser.py
+│   │   └── writer.py
+│   ├── input_data/
+│   │   ├── List of e-mails.txt
+│   │   ├── List_of_files.txt
+│   │   └── Users names.txt
+│   ├── output/
+│   │   ├── result.json
+│   │   └── result_tuples.txt
+│   └── tests/
+│       ├── test_main.py
+│       ├── test_matcher.py
+│       └── test_normalizer.py
+├── collect_project_dump.py
+├── project_dump.txt
+├── pytest.ini
+├── requirements.txt
+├── Test_D004.pdf
+└── todo.py
+
+================================================================================
+FILE: collect_project_dump.py
+================================================================================
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable
+
+EXCLUDED_DIRS = {
+    '.git',
+    '.idea',
+    '.vscode',
+    '.pytest_cache',
+    '__pycache__',
+    'venv',
+    '.venv',
+    'node_modules',
+    'dist',
+    'build',
+}
+
+INCLUDED_SUFFIXES = {
+    '.py',
+    '.txt',
+    '.md',
+    '.rst',
+    '.ini',
+    '.toml',
+    '.yaml',
+    '.yml',
+    '.json',
+    '.csv',
+}
+
+EXCLUDED_FILENAMES = {
+    '.DS_Store',
+}
+
+
+def iter_project_files(root: Path) -> Iterable[Path]:
+    for path in sorted(root.rglob('*')):
+        if any(part in EXCLUDED_DIRS for part in path.parts):
+            continue
+        if path.is_dir():
+            continue
+        if path.name in EXCLUDED_FILENAMES:
+            continue
+        if path.suffix.lower() not in INCLUDED_SUFFIXES:
+            continue
+        yield path
+
+
+def build_tree(root: Path) -> str:
+    lines: list[str] = [f'{root.name}/']
+
+    def walk(directory: Path, prefix: str = '') -> None:
+        entries = [
+            p for p in sorted(directory.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+            if p.name not in EXCLUDED_FILENAMES and p.name not in EXCLUDED_DIRS
+        ]
+        for index, entry in enumerate(entries):
+            connector = '└── ' if index == len(entries) - 1 else '├── '
+            lines.append(f'{prefix}{connector}{entry.name}{"/" if entry.is_dir() else ""}')
+            if entry.is_dir():
+                extension = '    ' if index == len(entries) - 1 else '│   '
+                walk(entry, prefix + extension)
+
+    walk(root)
+    return '\n'.join(lines)
+
+
+def dump_project(root: Path, output_path: Path) -> None:
+    files = list(iter_project_files(root))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open('w', encoding='utf-8') as f:
+        f.write(f'PROJECT ROOT: {root}\n\n')
+        f.write('PROJECT TREE\n')
+        f.write('=' * 80 + '\n')
+        f.write(build_tree(root))
+        f.write('\n\n')
+
+        for file_path in files:
+            relative = file_path.relative_to(root)
+            f.write('=' * 80 + '\n')
+            f.write(f'FILE: {relative}\n')
+            f.write('=' * 80 + '\n')
+            try:
+                content = file_path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                content = file_path.read_text(encoding='utf-8', errors='replace')
+            f.write(content)
+            if not content.endswith('\n'):
+                f.write('\n')
+            f.write('\n')
+
+
+if __name__ == '__main__':
+    project_root = Path.cwd()
+    output_file = project_root / 'project_dump.txt'
+    dump_project(project_root, output_file)
+    print(f'Done. Dump saved to: {output_file}')
+
+================================================================================
+FILE: pytest.ini
+================================================================================
+[pytest]
+pythonpath = task_d004
+testpaths = task_d004/tests
+
+================================================================================
+FILE: requirements.txt
+================================================================================
+pytest>=8.0.0
+
+================================================================================
+FILE: task_d004\app\__init__.py
+================================================================================
+
+
+================================================================================
+FILE: task_d004\app\main.py
+================================================================================
+from pathlib import Path
+
+from app.matcher import build_output_records
+from app.models import OutputRecord
+from app.parser import read_lines
+from app.writer import write_json, write_tuples
+
+
+def sort_records(records: list[OutputRecord]) -> list[OutputRecord]:
+    return sorted(
+        records,
+        key=lambda r: (
+            r.full_name is None,
+            r.full_name or "",
+            r.email or "",
+            r.file_path or "",
+        ),
+    )
+
+
+def main() -> None:
+    base_dir = Path(__file__).resolve().parent.parent
+
+    names_path = base_dir / "input_data" / "Users names.txt"
+    emails_path = base_dir / "input_data" / "List of e-mails.txt"
+    files_path = base_dir / "input_data" / "List_of_files.txt"
+
+    json_output_path = base_dir / "output" / "result.json"
+    tuples_output_path = base_dir / "output" / "result_tuples.txt"
+
+    names = read_lines(names_path)
+    emails = read_lines(emails_path)
+    file_paths = read_lines(files_path)
+
+    records = build_output_records(
+        names=names,
+        emails=emails,
+        file_paths=file_paths,
+    )
+
+    records = sort_records(records)
+
+    write_json(records, json_output_path)
+    write_tuples(records, tuples_output_path)
+
+    print(f"Done. JSON result saved to: {json_output_path}")
+    print(f"Done. Tuple result saved to: {tuples_output_path}")
+
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+FILE: task_d004\app\matcher.py
+================================================================================
+from app.models import NameEntry, EmailEntry, FileEntry, OutputRecord
+from app.normalizer import build_name_keys, build_email_keys, build_file_keys
+
+
+def make_name_entries(names: list[str]) -> list[NameEntry]:
+    return [NameEntry(raw=name, keys=build_name_keys(name)) for name in names]
+
+
+def make_email_entries(emails: list[str]) -> list[EmailEntry]:
+    return [EmailEntry(raw=email, keys=build_email_keys(email)) for email in emails]
+
+
+def make_file_entries(file_paths: list[str]) -> list[FileEntry]:
+    return [FileEntry(raw=path, keys=build_file_keys(path)) for path in file_paths]
+
+
+def score_match(left_keys: set[str], right_keys: set[str]) -> int:
+    return len(left_keys & right_keys)
+
+
+def find_best_unique_match(source_keys: set[str], candidates: list, used_raw_values: set[str]):
+    scored = []
+
+    for candidate in candidates:
+        if candidate.raw in used_raw_values:
+            continue
+
+        score = score_match(source_keys, candidate.keys)
+        if score > 0:
+            scored.append((score, candidate))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    best_score = scored[0][0]
+    best_candidates = [candidate for score, candidate in scored if score == best_score]
+
+    if len(best_candidates) == 1:
+        return best_candidates[0]
+
+    return None
+
+
+def build_output_records(
+    names: list[str],
+    emails: list[str],
+    file_paths: list[str],
+) -> list[OutputRecord]:
+    name_entries = make_name_entries(names)
+    email_entries = make_email_entries(emails)
+    file_entries = make_file_entries(file_paths)
+
+    used_emails: set[str] = set()
+    used_files: set[str] = set()
+    results: list[OutputRecord] = []
+
+    for name_entry in name_entries:
+        matched_email = find_best_unique_match(name_entry.keys, email_entries, used_emails)
+        matched_file = find_best_unique_match(name_entry.keys, file_entries, used_files)
+
+        if matched_email:
+            used_emails.add(matched_email.raw)
+
+        if matched_file:
+            used_files.add(matched_file.raw)
+
+        results.append(
+            OutputRecord(
+                full_name=name_entry.raw,
+                email=matched_email.raw if matched_email else None,
+                file_path=matched_file.raw if matched_file else None,
+            )
+        )
+
+    for email_entry in email_entries:
+        if email_entry.raw not in used_emails:
+            results.append(
+                OutputRecord(
+                    full_name=None,
+                    email=email_entry.raw,
+                    file_path=None,
+                )
+            )
+
+    for file_entry in file_entries:
+        if file_entry.raw not in used_files:
+            results.append(
+                OutputRecord(
+                    full_name=None,
+                    email=None,
+                    file_path=file_entry.raw,
+                )
+            )
+
+    return results
+
+================================================================================
+FILE: task_d004\app\models.py
+================================================================================
+from dataclasses import dataclass
+from typing import Optional, Set
+
+@dataclass(frozen=True)
+class NameEntry:
+    raw: str
+    keys: Set[str]
+
+@dataclass(frozen=True)
+class EmailEntry:
+    raw: str
+    keys: Set[str]
+
+@dataclass(frozen=True)
+class FileEntry:
+    raw: str
+    keys: Set[str]
+
+@dataclass(frozen=True)
+class OutputRecord:
+    full_name: Optional[str]
+    email: Optional[str]
+    file_path: Optional[str]
+
+================================================================================
+FILE: task_d004\app\normalizer.py
+================================================================================
+import os
+import re
+from pathlib import PureWindowsPath
+
+
+SEPARATORS_PATTERN = re.compile(r"[._\s]+")
+NON_LETTERS_PATTERN = re.compile(r"[^a-z]")
+
+
+def clean_letters(value: str) -> str:
+    return NON_LETTERS_PATTERN.sub("", value.lower())
+
+
+def split_name_tokens(full_name: str) -> list[str]:
+    parts = re.split(r"\s+", full_name.strip())
+    tokens = []
+
+    for part in parts:
+        cleaned = re.sub(r"[^a-z-]", "", part.lower())
+        if cleaned:
+            tokens.append(cleaned)
+
+    return tokens
+
+
+def split_loose_tokens(value: str) -> list[str]:
+    parts = SEPARATORS_PATTERN.split(value.strip().lower())
+    tokens = []
+
+    for part in parts:
+        cleaned = re.sub(r"[^a-z-]", "", part.lower())
+        if cleaned:
+            tokens.append(cleaned)
+
+    return tokens
+
+
+def get_email_local_part(email: str) -> str:
+    return email.split("@", 1)[0].strip()
+
+
+def get_file_stem(file_path: str) -> str:
+    path = PureWindowsPath(file_path)
+    if path.stem:
+        return path.stem
+    return os.path.splitext(os.path.basename(file_path))[0]
+
+
+def build_name_keys(full_name: str) -> set[str]:
+    raw_tokens = split_name_tokens(full_name)
+    plain_tokens = [token.replace("-", "") for token in raw_tokens]
+
+    if not plain_tokens:
+        return set()
+
+    first = plain_tokens[0]
+    last = plain_tokens[-1]
+    initials = "".join(token[0] for token in plain_tokens if token)
+
+    keys = {
+        "".join(plain_tokens),
+        "_".join(plain_tokens),
+        ".".join(plain_tokens),
+        " ".join(plain_tokens),
+        first + last,
+        f"{first}_{last}",
+        f"{first}.{last}",
+        f"{first} {last}",
+        first[0] + last,
+        f"{first[0]}_{last}",
+        f"{first[0]}.{last}",
+        f"{first[0]} {last}",
+        initials,
+        initials + last,
+    }
+
+    if len(plain_tokens) >= 3:
+        middle_initials = [token[0] for token in plain_tokens[1:-1] if token]
+        if middle_initials:
+            keys.add("".join([first[0], *middle_initials, last]))
+            keys.add(".".join([first[0], *middle_initials, last]))
+            keys.add("_".join([first[0], *middle_initials, last]))
+
+    # отдельная поддержка фамилий с дефисом
+    raw_last = raw_tokens[-1]
+    if "-" in raw_last:
+        last_hyphen = raw_last
+        last_underscore = raw_last.replace("-", "_")
+        last_dot = raw_last.replace("-", ".")
+        last_compact = raw_last.replace("-", "")
+
+        for last_variant in {last_hyphen, last_underscore, last_dot, last_compact}:
+            compact_last = clean_letters(last_variant)
+            keys.update(
+                {
+                    f"{first}_{last_variant}",
+                    f"{first}.{last_variant}",
+                    first + compact_last,
+                    first[0] + compact_last,
+                    f"{first[0]}_{last_variant}",
+                    f"{first[0]}.{last_variant}",
+                }
+            )
+
+    normalized = set()
+    for key in keys:
+        key = key.lower()
+        normalized.add(key)
+        normalized.add(clean_letters(key))
+        normalized.add(key.replace("-", "_"))
+        normalized.add(key.replace("-", "."))
+
+    return {key for key in normalized if key}
+
+
+def build_email_keys(email: str) -> set[str]:
+    local = get_email_local_part(email).lower()
+    parts = split_loose_tokens(local)
+    plain_parts = [part.replace("-", "") for part in parts]
+
+    keys = {
+        local,
+        clean_letters(local),
+        local.replace(".", "_"),
+        local.replace("_", "."),
+        local.replace("-", "_"),
+        local.replace("-", "."),
+    }
+
+    if parts:
+        keys.update(
+            {
+                "".join(plain_parts),
+                "_".join(parts),
+                ".".join(parts),
+            }
+        )
+
+        if len(parts) >= 2:
+            first = plain_parts[0]
+            last = plain_parts[-1]
+            raw_last = parts[-1]
+
+            keys.update(
+                {
+                    first + last,
+                    f"{first}_{raw_last}",
+                    f"{first}.{raw_last}",
+                    first[0] + last,
+                    f"{first[0]}_{raw_last}",
+                    f"{first[0]}.{raw_last}",
+                }
+            )
+
+    return {key for key in keys if key}
+
+
+def build_file_keys(file_path: str) -> set[str]:
+    stem = get_file_stem(file_path).lower()
+    parts = split_loose_tokens(stem)
+    plain_parts = [part.replace("-", "") for part in parts]
+
+    keys = {
+        stem,
+        clean_letters(stem),
+        stem.replace(".", "_"),
+        stem.replace("_", "."),
+        stem.replace("-", "_"),
+        stem.replace("-", "."),
+    }
+
+    if parts:
+        keys.update(
+            {
+                "".join(plain_parts),
+                "_".join(parts),
+                ".".join(parts),
+                " ".join(parts),
+            }
+        )
+
+        if len(parts) >= 2:
+            first = plain_parts[0]
+            last = plain_parts[-1]
+            raw_last = parts[-1]
+
+            keys.update(
+                {
+                    first + last,
+                    f"{first}_{raw_last}",
+                    f"{first}.{raw_last}",
+                    first[0] + last,
+                    f"{first[0]}_{raw_last}",
+                    f"{first[0]}.{raw_last}",
+                }
+            )
+
+    return {key for key in keys if key}
+
+================================================================================
+FILE: task_d004\app\parser.py
+================================================================================
+from pathlib import Path
+
+def read_lines(path: str | Path) -> list[str]:
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+    
+    
+
+================================================================================
+FILE: task_d004\app\writer.py
+================================================================================
+import json
+from dataclasses import asdict
+from pathlib import Path
+
+from app.models import OutputRecord
+
+
+def write_json(records: list[OutputRecord], output_path: str | Path) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = [asdict(record) for record in records]
+
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            payload,
+            f,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=False,
+        )
+        f.write("\n")
+
+
+def write_tuples(records: list[OutputRecord], output_path: str | Path) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = [
+        (record.full_name, record.email, record.file_path)
+        for record in records
+    ]
+
+    with output_path.open("w", encoding="utf-8") as f:
+        f.write("[\n")
+        for index, item in enumerate(payload):
+            suffix = "," if index < len(payload) - 1 else ""
+            f.write(f"    {item!r}{suffix}\n")
+        f.write("]\n")
+
+================================================================================
+FILE: task_d004\input_data\List of e-mails.txt
+================================================================================
+J.Stone@dundermifflin.com
+P.Priya@dundermifflin.com
+M.Wong@dundermifflin.com
+Eugenia.Anders@dundermifflin.com
+A.Kazantzis@dundermifflin.com
+V.Blair@dundermifflin.com
+J_Meldrum@dundermifflin.com
+M.M.Smith@dundermifflin.com
+Desiree_Burch@dundermifflin.com
+D.Harry@dundermifflin.org
+HaymanAndrews@dundermifflin.org
+T_French@dundermifflin.com
+S.Simoes@dundermifflin.com
+Trevor.Stone@dundermifflin.com
+Peter_Stanbridge@dundermifflin.com
+Natalie_Lee-Walsh@dundermifflin.com
+A_Li@dundermifflin.com
+Nguta_Ithya@dundermifflin.com
+Tarryn_Campbell-Gillies@dundermifflin.com
+
+================================================================================
+FILE: task_d004\input_data\List_of_files.txt
+================================================================================
+C:\Second Group\M.M.Smith.xml
+C:\Second Group\T.Campbell-Gillies.jq
+C:\FirstGroup\Ponnappa_Priya.txt
+C:\FirstGroup\M.Wong.jpeg
+C:\Second Group\V_Blair.txtex
+C:\FirstGroup\N_Lee-Walsh.pdf
+C:\FirstGroup\T_French.jq
+C:\Second Group\S_Simoes.jq
+C:\Second Group\Trevor_Virtue.jq
+C:\FirstGroup\John_Stone.pdf
+C:\Second Group\E.Anders.txtex
+C:\Second Group\A.Kazantzis.txtex
+C:\FirstGroup\P.Stanbridge.pdf
+C:\Secon Group\Jane_Meldrum.xml
+C:\Users\Admin\Desktop\Ruveni Ellawala.xml
+C:\Second Group\D.Burch.xml
+C:\Second Group\Daly_Harry.xml
+C:\Second Group\Hayman_Andrews.xml
+
+================================================================================
+FILE: task_d004\input_data\Users names.txt
+================================================================================
+Trevor Virtue
+Tarryn Campbell-Gillies
+Eugenia Anders
+Andrew Kazantzis
+Natalie Lee-Walsh
+Desiree Burch
+Verona Blair
+John Stone
+Ponnappa Priya
+Ang Li
+Nguta Ithya
+Tamzyn French
+Salome Simoes
+Jane Meldrum
+Maureen M. Smith
+Mia Wong
+Peter Stanbridge
+Daly Harry
+Hayman Andrews
+Ruveni Ellawala
+
+================================================================================
+FILE: task_d004\output\result.json
+================================================================================
+[
+  {
+    "full_name": "Andrew Kazantzis",
+    "email": "A.Kazantzis@dundermifflin.com",
+    "file_path": "C:\\Second Group\\A.Kazantzis.txtex"
+  },
+  {
+    "full_name": "Ang Li",
+    "email": "A_Li@dundermifflin.com",
+    "file_path": null
+  },
+  {
+    "full_name": "Daly Harry",
+    "email": "D.Harry@dundermifflin.org",
+    "file_path": "C:\\Second Group\\Daly_Harry.xml"
+  },
+  {
+    "full_name": "Desiree Burch",
+    "email": "Desiree_Burch@dundermifflin.com",
+    "file_path": "C:\\Second Group\\D.Burch.xml"
+  },
+  {
+    "full_name": "Eugenia Anders",
+    "email": "Eugenia.Anders@dundermifflin.com",
+    "file_path": "C:\\Second Group\\E.Anders.txtex"
+  },
+  {
+    "full_name": "Hayman Andrews",
+    "email": "HaymanAndrews@dundermifflin.org",
+    "file_path": "C:\\Second Group\\Hayman_Andrews.xml"
+  },
+  {
+    "full_name": "Jane Meldrum",
+    "email": "J_Meldrum@dundermifflin.com",
+    "file_path": "C:\\Secon Group\\Jane_Meldrum.xml"
+  },
+  {
+    "full_name": "John Stone",
+    "email": "J.Stone@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\John_Stone.pdf"
+  },
+  {
+    "full_name": "Maureen M. Smith",
+    "email": "M.M.Smith@dundermifflin.com",
+    "file_path": "C:\\Second Group\\M.M.Smith.xml"
+  },
+  {
+    "full_name": "Mia Wong",
+    "email": "M.Wong@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\M.Wong.jpeg"
+  },
+  {
+    "full_name": "Natalie Lee-Walsh",
+    "email": "Natalie_Lee-Walsh@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\N_Lee-Walsh.pdf"
+  },
+  {
+    "full_name": "Nguta Ithya",
+    "email": "Nguta_Ithya@dundermifflin.com",
+    "file_path": null
+  },
+  {
+    "full_name": "Peter Stanbridge",
+    "email": "Peter_Stanbridge@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\P.Stanbridge.pdf"
+  },
+  {
+    "full_name": "Ponnappa Priya",
+    "email": "P.Priya@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\Ponnappa_Priya.txt"
+  },
+  {
+    "full_name": "Ruveni Ellawala",
+    "email": null,
+    "file_path": "C:\\Users\\Admin\\Desktop\\Ruveni Ellawala.xml"
+  },
+  {
+    "full_name": "Salome Simoes",
+    "email": "S.Simoes@dundermifflin.com",
+    "file_path": "C:\\Second Group\\S_Simoes.jq"
+  },
+  {
+    "full_name": "Tamzyn French",
+    "email": "T_French@dundermifflin.com",
+    "file_path": "C:\\FirstGroup\\T_French.jq"
+  },
+  {
+    "full_name": "Tarryn Campbell-Gillies",
+    "email": "Tarryn_Campbell-Gillies@dundermifflin.com",
+    "file_path": "C:\\Second Group\\T.Campbell-Gillies.jq"
+  },
+  {
+    "full_name": "Trevor Virtue",
+    "email": null,
+    "file_path": "C:\\Second Group\\Trevor_Virtue.jq"
+  },
+  {
+    "full_name": "Verona Blair",
+    "email": "V.Blair@dundermifflin.com",
+    "file_path": "C:\\Second Group\\V_Blair.txtex"
+  },
+  {
+    "full_name": null,
+    "email": "Trevor.Stone@dundermifflin.com",
+    "file_path": null
+  }
+]
+
+================================================================================
+FILE: task_d004\output\result_tuples.txt
+================================================================================
+[
+    ('Andrew Kazantzis', 'A.Kazantzis@dundermifflin.com', 'C:\\Second Group\\A.Kazantzis.txtex'),
+    ('Ang Li', 'A_Li@dundermifflin.com', None),
+    ('Daly Harry', 'D.Harry@dundermifflin.org', 'C:\\Second Group\\Daly_Harry.xml'),
+    ('Desiree Burch', 'Desiree_Burch@dundermifflin.com', 'C:\\Second Group\\D.Burch.xml'),
+    ('Eugenia Anders', 'Eugenia.Anders@dundermifflin.com', 'C:\\Second Group\\E.Anders.txtex'),
+    ('Hayman Andrews', 'HaymanAndrews@dundermifflin.org', 'C:\\Second Group\\Hayman_Andrews.xml'),
+    ('Jane Meldrum', 'J_Meldrum@dundermifflin.com', 'C:\\Secon Group\\Jane_Meldrum.xml'),
+    ('John Stone', 'J.Stone@dundermifflin.com', 'C:\\FirstGroup\\John_Stone.pdf'),
+    ('Maureen M. Smith', 'M.M.Smith@dundermifflin.com', 'C:\\Second Group\\M.M.Smith.xml'),
+    ('Mia Wong', 'M.Wong@dundermifflin.com', 'C:\\FirstGroup\\M.Wong.jpeg'),
+    ('Natalie Lee-Walsh', 'Natalie_Lee-Walsh@dundermifflin.com', 'C:\\FirstGroup\\N_Lee-Walsh.pdf'),
+    ('Nguta Ithya', 'Nguta_Ithya@dundermifflin.com', None),
+    ('Peter Stanbridge', 'Peter_Stanbridge@dundermifflin.com', 'C:\\FirstGroup\\P.Stanbridge.pdf'),
+    ('Ponnappa Priya', 'P.Priya@dundermifflin.com', 'C:\\FirstGroup\\Ponnappa_Priya.txt'),
+    ('Ruveni Ellawala', None, 'C:\\Users\\Admin\\Desktop\\Ruveni Ellawala.xml'),
+    ('Salome Simoes', 'S.Simoes@dundermifflin.com', 'C:\\Second Group\\S_Simoes.jq'),
+    ('Tamzyn French', 'T_French@dundermifflin.com', 'C:\\FirstGroup\\T_French.jq'),
+    ('Tarryn Campbell-Gillies', 'Tarryn_Campbell-Gillies@dundermifflin.com', 'C:\\Second Group\\T.Campbell-Gillies.jq'),
+    ('Trevor Virtue', None, 'C:\\Second Group\\Trevor_Virtue.jq'),
+    ('Verona Blair', 'V.Blair@dundermifflin.com', 'C:\\Second Group\\V_Blair.txtex'),
+    (None, 'Trevor.Stone@dundermifflin.com', None)
+]
+
+================================================================================
+FILE: task_d004\tests\test_main.py
+================================================================================
+import json
+from pathlib import Path
+
+from app.matcher import build_output_records
+from app.writer import write_json
+
+
+def test_end_to_end(tmp_path: Path):
+    names = ["John Stone"]
+    emails = ["J.Stone@dundermifflin.com"]
+    files = [r"C:\FirstGroup\John_Stone.pdf"]
+
+    records = build_output_records(names, emails, files)
+
+    out_file = tmp_path / "result.json"
+    write_json(records, out_file)
+
+    assert out_file.exists()
+
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert len(payload) == 1
+    assert payload[0]["full_name"] == "John Stone"
+    assert payload[0]["email"] == "J.Stone@dundermifflin.com"
+    assert payload[0]["file_path"] == r"C:\FirstGroup\John_Stone.pdf"
+
+================================================================================
+FILE: task_d004\tests\test_matcher.py
+================================================================================
+from app.matcher import build_output_records
+
+
+def test_build_output_records_happy_path():
+    names = ["John Stone", "Jane Meldrum"]
+    emails = [
+        "J.Stone@dundermifflin.com",
+        "J_Meldrum@dundermifflin.com",
+    ]
+    files = [
+        r"C:\FirstGroup\John_Stone.pdf",
+        r"C:\Second Group\Jane_Meldrum.xml",
+    ]
+
+    records = build_output_records(names, emails, files)
+
+    john_record = next(r for r in records if r.full_name == "John Stone")
+    jane_record = next(r for r in records if r.full_name == "Jane Meldrum")
+
+    assert john_record.email == "J.Stone@dundermifflin.com"
+    assert john_record.file_path == r"C:\FirstGroup\John_Stone.pdf"
+
+    assert jane_record.email == "J_Meldrum@dundermifflin.com"
+    assert jane_record.file_path == r"C:\Second Group\Jane_Meldrum.xml"
+
+
+def test_build_output_records_missing_file():
+    names = ["Ang Li"]
+    emails = ["A_Li@dundermifflin.com"]
+    files = []
+
+    records = build_output_records(names, emails, files)
+    record = records[0]
+
+    assert record.full_name == "Ang Li"
+    assert record.email == "A_Li@dundermifflin.com"
+    assert record.file_path is None
+
+
+def test_build_output_records_unmatched_email():
+    names = []
+    emails = ["J.Osbourne@dundermifflin.com"]
+    files = []
+
+    records = build_output_records(names, emails, files)
+
+    assert len(records) == 1
+    assert records[0].full_name is None
+    assert records[0].email == "J.Osbourne@dundermifflin.com"
+    assert records[0].file_path is None
+
+
+def test_build_output_records_unmatched_file():
+    names = []
+    emails = []
+    files = [r"C:\Misc\Unknown_User.pdf"]
+
+    records = build_output_records(names, emails, files)
+
+    assert len(records) == 1
+    assert records[0].full_name is None
+    assert records[0].email is None
+    assert records[0].file_path == r"C:\Misc\Unknown_User.pdf"
+
+================================================================================
+FILE: task_d004\tests\test_normalizer.py
+================================================================================
+from app.normalizer import (
+    build_name_keys,
+    build_email_keys,
+    build_file_keys,
+    get_email_local_part,
+    get_file_stem,
+)
+
+
+def test_get_email_local_part():
+    assert get_email_local_part("J.Stone@dundermifflin.com") == "J.Stone"
+
+
+def test_get_file_stem():
+    assert get_file_stem(r"C:\FirstGroup\John_Stone.pdf") == "John_Stone"
+
+
+def test_build_name_keys_for_simple_name():
+    keys = build_name_keys("John Stone")
+    assert "johnstone" in keys
+    assert "john_stone" in keys
+    assert "jstone" in keys
+    assert "j_stone" in keys
+    assert "j.stone" in keys
+
+
+def test_build_name_keys_for_middle_initial():
+    keys = build_name_keys("Maureen M. Smith")
+    assert "maureensmith" in keys or "maureen_smith" in keys
+    assert "mmsmith" in keys
+    assert "m.smith" in keys or "m_smith" in keys
+
+
+def test_build_email_keys():
+    keys = build_email_keys("J_Meldrum@dundermifflin.com")
+    assert "jmeldrum" in keys
+    assert "j_meldrum" in keys
+    assert "j.meldrum" in keys
+
+
+def test_build_file_keys():
+    keys = build_file_keys(r"C:\Second Group\N_Lee-Walsh.pdf")
+    assert "nleewalsh" in keys
+    assert "n_lee-walsh".replace("-", "_") in {k.replace("-", "_") for k in keys}
+
+================================================================================
+FILE: todo.py
+================================================================================
+
+

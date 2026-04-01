@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+.vscode/
+.idea/
+
+*.pyc
+
+task_d004/output/
